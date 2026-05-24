@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #f6f8fa;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Stagger animation for business rules */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rule-item {
+  animation: fadeInUp 0.3s ease forwards;
+  opacity: 0;
+}
+
+/* Highlight.js overrides for the code panel */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 0.8125rem !important;
+  line-height: 1.6 !important;
+}
