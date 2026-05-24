@@ -1312,6 +1312,13 @@ export default function App() {
         {/* Output panels */}
         {(loading || result) && (
           <div className="space-y-6">
+            {!loading && result && (
+              <DagPanel
+                dependencies={result?.explanation?.dependencies}
+                modelName={result?.dbt_model?.filename}
+                summary={result?.explanation?.summary}
+              />
+            )}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {loading ? (
                 <LoadingOverlay message={loadingMsg} />
@@ -1322,13 +1329,6 @@ export default function App() {
                 </>
               )}
             </div>
-            {!loading && result && (
-              <DagPanel
-                dependencies={result?.explanation?.dependencies}
-                modelName={result?.dbt_model?.filename}
-                summary={result?.explanation?.summary}
-              />
-            )}
           </div>
         )}
       </main>
