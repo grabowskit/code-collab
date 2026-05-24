@@ -182,6 +182,50 @@ const LOADING_MESSAGES = [
   'Annotating translation decisions...',
 ]
 
+// Load all example SQL files at build time via Vite glob import
+const EXAMPLE_MODULES = import.meta.glob('../examples/**/*.sql', { query: '?raw', import: 'default', eager: true })
+
+const FOLDER_TO_DIALECT = { tsql: 'T-SQL', plsql: 'PL/SQL', postgresql: 'Other SQL' }
+
+function formatExampleLabel(filename) {
+  return filename
+    .replace('.sql', '')
+    .replace(/^(tsql|plsql|pg)_\d+_/, '')
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+const EXAMPLES = Object.entries(EXAMPLE_MODULES)
+  .map(([path, content]) => {
+    const parts = path.split('/')
+    const folder = parts[parts.length - 2]
+    const filename = parts[parts.length - 1]
+    return {
+      path,
+      content,
+      dialect: FOLDER_TO_DIALECT[folder] || 'T-SQL',
+      folder,
+      filename,
+      label: formatExampleLabel(filename),
+    }
+  })
+  .sort((a, b) => a.filename.localeCompare(b.filename))
+
+function detectDialect(sql) {
+  // PostgreSQL: most distinctive markers
+  if (/LANGUAGE\s+PLPGSQL/i.test(sql) || /\$\$/.test(sql) ||
+      /\bGENERATE_SERIES\b/i.test(sql) || /\bJSONB\b/i.test(sql) ||
+      /ON CONFLICT/i.test(sql)) return 'Other SQL'
+  // Oracle PL/SQL
+  const u = sql.toUpperCase()
+  if (['SYSDATE', 'DBMS_', 'UTL_FILE', 'SYS_CONTEXT', '%ROWTYPE',
+       'CONNECT BY', 'PRAGMA ', 'ADD_MONTHS', 'MONTHS_BETWEEN',
+       'BULK COLLECT', 'FORALL', 'NVL(', 'DECODE('].some(k => u.includes(k)) ||
+      /\bDUAL\b/.test(u)) return 'PL/SQL'
+  return 'T-SQL'
+}
+
 const COMPLEXITY_STYLES = {
   Green: { bg: '#dcfce7', text: '#166534' },
   Yellow: { bg: '#fef9c3', text: '#854d0e' },
@@ -612,7 +656,9 @@ export default function App() {
   const [sqlError, setSqlError] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
   const [panelVisible, setPanelVisible] = useState(false)
+  const [selectedFile, setSelectedFile] = useState('')
   const loadingIntervalRef = useRef(null)
+  const fileInputRef = useRef(null)
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
   const model = import.meta.env.VITE_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4-5'
 
@@ -636,6 +682,45 @@ export default function App() {
       clearInterval(loadingIntervalRef.current)
       loadingIntervalRef.current = null
     }
+  }
+
+  function clearResults() {
+    setResult(null)
+    setError(null)
+    setRawError(null)
+    setPanelVisible(false)
+  }
+
+  function handleFileSelect(e) {
+    const val = e.target.value
+    if (!val) return
+    if (val === '__upload__') {
+      fileInputRef.current.click()
+      setSelectedFile('')
+      return
+    }
+    const example = EXAMPLES.find(ex => ex.path === val)
+    if (example) {
+      setSql(example.content)
+      setDialect(example.dialect)
+      setSelectedFile(val)
+      clearResults()
+    }
+  }
+
+  function handleFileUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const content = ev.target.result
+      setSql(content)
+      setDialect(detectDialect(content))
+      setSelectedFile('')
+      clearResults()
+    }
+    reader.readAsText(file)
+    e.target.value = ''
   }
 
   async function handleAnalyze() {
@@ -721,33 +806,66 @@ export default function App() {
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden mb-6">
           <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
             <h1 className="font-semibold text-gray-900">SQL Migration Explainer</h1>
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-gray-600">Dialect:</label>
-              <select
-                value={dialect}
-                onChange={e => {
-                  const next = e.target.value
-                  setDialect(next)
-                  if (Object.values(DEMO_PROCEDURES).includes(sql)) {
-                    setSql(DEMO_PROCEDURES[next])
-                  }
-                  setResult(null)
-                  setError(null)
-                  setRawError(null)
-                  setPanelVisible(false)
-                }}
-                className="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="T-SQL">T-SQL</option>
-                <option value="PL/SQL">PL/SQL</option>
-                <option value="Other SQL">Other SQL</option>
-              </select>
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* File selector */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-600">File:</label>
+                <select
+                  value={selectedFile}
+                  onChange={handleFileSelect}
+                  className="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  style={{ maxWidth: '220px' }}
+                >
+                  <option value="">Select a file...</option>
+                  <option value="__upload__">⬆ Upload your own...</option>
+                  {['tsql', 'plsql', 'postgresql'].map(folder => {
+                    const group = EXAMPLES.filter(e => e.folder === folder)
+                    if (!group.length) return null
+                    return (
+                      <optgroup key={folder} label={FOLDER_TO_DIALECT[folder]}>
+                        {group.map(ex => (
+                          <option key={ex.path} value={ex.path}>{ex.label}</option>
+                        ))}
+                      </optgroup>
+                    )
+                  })}
+                </select>
+              </div>
+              {/* Dialect selector */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-600">Dialect:</label>
+                <select
+                  value={dialect}
+                  onChange={e => {
+                    const next = e.target.value
+                    setDialect(next)
+                    setSelectedFile('')
+                    if (Object.values(DEMO_PROCEDURES).includes(sql)) {
+                      setSql(DEMO_PROCEDURES[next])
+                    }
+                    clearResults()
+                  }}
+                  className="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="T-SQL">T-SQL</option>
+                  <option value="PL/SQL">PL/SQL</option>
+                  <option value="Other SQL">Other SQL</option>
+                </select>
+              </div>
             </div>
           </div>
+          {/* Hidden file input for uploads */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".sql,.txt,.pls,.prc,.pkb"
+            style={{ display: 'none' }}
+            onChange={handleFileUpload}
+          />
           <div className="p-5">
             <textarea
               value={sql}
-              onChange={e => { setSql(e.target.value); if (sqlError) setSqlError(false) }}
+              onChange={e => { setSql(e.target.value); if (sqlError) setSqlError(false); if (selectedFile) setSelectedFile('') }}
               placeholder="Paste your stored procedure here..."
               rows={16}
               className={`w-full font-mono text-sm resize-y rounded-md border bg-gray-50 px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors ${sqlError ? 'border-red-400 bg-red-50' : 'border-gray-200'}`}
