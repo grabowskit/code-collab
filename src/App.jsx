@@ -200,9 +200,12 @@ function Header() {
   return (
     <header style={{ backgroundColor: '#0d1117' }} className="px-6 py-4">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div>
-          <span className="text-white font-semibold text-xl tracking-tight">CodeCollab</span>
-          <p className="text-gray-400 text-xs mt-0.5">AI Migration Pipeline — Phase 1 Preview</p>
+        <div className="flex items-center gap-3">
+          <img src="/favicon.svg" alt="CodeCollab logo" width="32" height="32" />
+          <div>
+            <span className="text-white font-semibold text-xl tracking-tight">CodeCollab</span>
+            <p className="text-gray-400 text-xs mt-0.5">AI Migration Pipeline — Phase 1 Preview</p>
+          </div>
         </div>
         <a
           href="https://github.com/grabowskit/code-collab"
