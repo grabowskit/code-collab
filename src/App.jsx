@@ -728,6 +728,10 @@ export default function App() {
                   if (Object.values(DEMO_PROCEDURES).includes(sql)) {
                     setSql(DEMO_PROCEDURES[next])
                   }
+                  setResult(null)
+                  setError(null)
+                  setRawError(null)
+                  setPanelVisible(false)
                 }}
                 className="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
