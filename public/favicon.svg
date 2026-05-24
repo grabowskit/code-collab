@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>CodeCollab</title>
+
+  <!-- Background: dark squircle matching the app header -->
+  <rect width="32" height="32" rx="7" fill="#0d1117"/>
+
+  <!-- Edges (drawn first so nodes sit on top) -->
+  <!-- Source 1 → model -->
+  <line x1="10" y1="11" x2="13" y2="14.5" stroke="#475569" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Source 2 → model -->
+  <line x1="10" y1="21" x2="13" y2="17.5" stroke="#475569" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Model → output -->
+  <line x1="19" y1="16" x2="22" y2="16" stroke="#475569" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Arrowhead -->
+  <polyline points="20.5,14.5 22.5,16 20.5,17.5" fill="none" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Source nodes: blue, matching DAG reads_from colour -->
+  <circle cx="7" cy="11" r="3" fill="#2563eb"/>
+  <circle cx="7" cy="21" r="3" fill="#2563eb"/>
+
+  <!-- Model node: dark rect with blue border, matching DAG centre node -->
+  <rect x="13" y="13" width="6" height="6" rx="1.5" fill="#161b22" stroke="#2563eb" stroke-width="1.5"/>
+
+  <!-- Output node: orange, matching DAG writes_to colour -->
+  <circle cx="25" cy="16" r="3" fill="#f97316"/>
+</svg>
