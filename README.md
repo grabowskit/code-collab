@@ -53,17 +53,6 @@ Then open [http://localhost:5173](http://localhost:5173) in your browser.
 | `VITE_OPENROUTER_API_KEY` | Your OpenRouter API key (required) | — |
 | `VITE_OPENROUTER_MODEL` | The model to use for analysis | `anthropic/claude-sonnet-4-5` |
 
-## Supported models
-
-Set `VITE_OPENROUTER_MODEL` in your `.env` to any of these OpenRouter model IDs:
-
-| Model | ID |
-|---|---|
-| Claude Sonnet 4.5 (default) | `anthropic/claude-sonnet-4-5` |
-| Claude Opus 4 | `anthropic/claude-opus-4` |
-| GPT-4o | `openai/gpt-4o` |
-| Gemini 2.5 Pro | `google/gemini-2.5-pro` |
-
 ## Tech stack
 
 - **Vite + React** — frontend framework
