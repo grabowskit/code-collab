@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { SYSTEM_PROMPT } from '../lib/prompt.js'
+import { SYSTEM_PROMPT, FEATURE_REQUEST_REVIEW_PROMPT } from '../lib/prompt.js'
 
 const DEMO_PROCEDURES = {
   'T-SQL': `CREATE PROCEDURE usp_calculate_order_status AS
@@ -212,7 +212,7 @@ function GitHubIcon() {
   )
 }
 
-function Header() {
+function Header({ onFeatureRequest }) {
   return (
     <header style={{ backgroundColor: '#0d1117' }} className="px-6 py-4">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -223,17 +223,423 @@ function Header() {
             <p className="text-gray-400 text-xs mt-0.5">AI Migration Pipeline — Phase 1 Preview</p>
           </div>
         </div>
-        <a
-          href="https://github.com/grabowskit/code-collab"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors text-sm"
-        >
-          <GitHubIcon />
-          <span>View on GitHub</span>
-        </a>
+        <div className="flex items-center gap-5">
+          <button
+            onClick={onFeatureRequest}
+            className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+          >
+            Feature Requests
+          </button>
+          <a
+            href="https://github.com/grabowskit/code-collab"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors text-sm"
+          >
+            <GitHubIcon />
+            <span>View on GitHub</span>
+          </a>
+        </div>
       </div>
     </header>
+  )
+}
+
+const STEP_LABELS = ['Title', 'Problem', 'Solution', 'Review & Submit']
+
+function FeatureRequestModal({ onClose }) {
+  const [step, setStep]           = useState(1)
+  const [title, setTitle]         = useState('')
+  const [problem, setProblem]     = useState('')
+  const [solution, setSolution]   = useState('')
+  const [context, setContext]     = useState('')
+  const [files, setFiles]         = useState([])
+  const [username, setUsername]   = useState('')
+  const [aiReview, setAiReview]   = useState('')
+  const [reviewing, setReviewing] = useState(false)
+  const [reviewError, setReviewError] = useState(null)
+  const [submitting, setSubmitting]   = useState(false)
+  const [submitted, setSubmitted]     = useState(null)
+  const [submitError, setSubmitError] = useState(null)
+  const fileInputRef  = useRef(null)
+  const reviewRanRef  = useRef(false)
+
+  const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
+  const model  = import.meta.env.VITE_OPENROUTER_MODEL || 'anthropic/claude-sonnet-4-5'
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+  // Escape to close
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape' && !submitting) onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [submitting])
+
+  // Auto-run AI review the first time step 4 loads
+  useEffect(() => {
+    if (step !== 4 || reviewRanRef.current) return
+    reviewRanRef.current = true
+    runReview()
+  }, [step])
+
+  async function runReview() {
+    if (!apiKey) { setReviewError('No OpenRouter API key configured.'); return }
+    setReviewing(true)
+    setReviewError(null)
+    setAiReview('')
+    try {
+      const prompt = FEATURE_REQUEST_REVIEW_PROMPT
+        .replace('{{title}}',    title)
+        .replace('{{problem}}',  problem)
+        .replace('{{solution}}', solution)
+        .replace('{{context}}',  context.trim() || 'None provided')
+      const res  = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization:  `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/grabowskit/code-collab',
+          'X-Title':      'CodeCollab Feature Request Review',
+        },
+        body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }] }),
+      })
+      const data = await res.json()
+      setAiReview(data.choices[0].message.content)
+    } catch {
+      setReviewError('AI review unavailable. You can still submit without it.')
+    } finally {
+      setReviewing(false)
+    }
+  }
+
+  function rerunReview() {
+    reviewRanRef.current = false
+    runReview()
+    reviewRanRef.current = true
+  }
+
+  function handleFileAdd(e) {
+    Array.from(e.target.files).forEach(file => {
+      const reader = new FileReader()
+      reader.onload = ev =>
+        setFiles(prev => [...prev, { name: file.name, content: ev.target.result }])
+      reader.readAsText(file)
+    })
+    e.target.value = ''
+  }
+
+  async function handleSubmit() {
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const res = await fetch(`${apiUrl}/feature-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title, problem, solution, context,
+          files,
+          github_username: username.trim() || 'code-collab-web',
+          ai_review: aiReview,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to create issue')
+      }
+      setSubmitted(await res.json())
+    } catch (err) {
+      setSubmitError(err.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const canAdvance = step === 1 ? title.trim().length > 0
+                   : step === 2 ? problem.trim().length > 0
+                   : step === 3 ? solution.trim().length > 0
+                   : true
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.65)' }}
+      onClick={e => { if (e.target === e.currentTarget && !submitting) onClose() }}
+    >
+      <div
+        className="bg-white rounded-lg border border-gray-200 w-full shadow-2xl flex flex-col"
+        style={{ maxWidth: '540px', maxHeight: '92vh' }}
+      >
+        {/* Modal header */}
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <h2 className="font-semibold text-gray-900">Feature Request</h2>
+          {!submitted && (
+            <button
+              onClick={onClose}
+              disabled={submitting}
+              className="text-gray-400 hover:text-gray-600 transition-colors text-lg leading-none"
+              aria-label="Close"
+            >✕</button>
+          )}
+        </div>
+
+        {/* Step progress */}
+        {!submitted && (
+          <div className="px-6 pt-5 pb-2 flex-shrink-0">
+            <div className="flex items-start">
+              {STEP_LABELS.map((label, i) => {
+                const s       = i + 1
+                const done    = s < step
+                const current = s === step
+                return (
+                  <div key={s} className={`flex items-center ${i < STEP_LABELS.length - 1 ? 'flex-1' : ''}`}>
+                    <div className="flex flex-col items-center">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all ${
+                        done    ? 'bg-blue-600 border-blue-600 text-white'
+                               : current ? 'border-blue-600 text-blue-600 bg-white'
+                                         : 'border-gray-200 text-gray-400 bg-white'
+                      }`}>
+                        {done ? '✓' : s}
+                      </div>
+                      <span className={`text-xs mt-1 whitespace-nowrap ${current ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
+                        {label}
+                      </span>
+                    </div>
+                    {i < STEP_LABELS.length - 1 && (
+                      <div className={`flex-1 h-0.5 mx-2 mb-5 transition-colors ${done ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="px-6 py-5 overflow-y-auto flex-1 font-sans">
+
+          {submitted ? (
+            <div className="text-center py-8">
+              <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                <span className="text-green-600 text-2xl">✓</span>
+              </div>
+              <h3 className="font-semibold text-gray-900 text-lg mb-1">Issue #{submitted.issue_number} created!</h3>
+              <p className="text-sm text-gray-500 mb-6">Your feature request has been submitted to GitHub.</p>
+              <a
+                href={submitted.issue_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white"
+                style={{ backgroundColor: '#2563eb' }}
+              >
+                View on GitHub →
+              </a>
+            </div>
+
+          ) : step === 1 ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                What would you like to request?
+              </label>
+              <p className="text-xs text-gray-400 mb-3">Give your feature a short, descriptive title.</p>
+              <input
+                type="text"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && canAdvance) setStep(2) }}
+                placeholder="e.g. Batch processing for multiple SQL files"
+                autoFocus
+                className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+          ) : step === 2 ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                What problem does this solve?
+              </label>
+              <p className="text-xs text-gray-400 mb-3">Describe the pain point or limitation you're experiencing.</p>
+              <textarea
+                value={problem}
+                onChange={e => setProblem(e.target.value)}
+                placeholder="e.g. I have 50+ stored procedures to migrate. Running the tool one file at a time is tedious and slow..."
+                rows={6}
+                autoFocus
+                className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y"
+              />
+            </div>
+
+          ) : step === 3 ? (
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  How should it work?
+                </label>
+                <p className="text-xs text-gray-400 mb-3">Describe your ideal solution.</p>
+                <textarea
+                  value={solution}
+                  onChange={e => setSolution(e.target.value)}
+                  placeholder="e.g. Add a --batch flag to the CLI that accepts a directory path and processes all .sql files inside it..."
+                  rows={4}
+                  autoFocus
+                  className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Additional context <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <textarea
+                  value={context}
+                  onChange={e => setContext(e.target.value)}
+                  placeholder="Links, examples, or anything else that would help..."
+                  rows={2}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Attach files <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <p className="text-xs text-gray-400 mb-2">SQL files will be included as code blocks in the issue.</p>
+                {files.length > 0 && (
+                  <ul className="mb-2 space-y-1">
+                    {files.map((f, i) => (
+                      <li key={i} className="flex items-center justify-between px-3 py-1.5 bg-gray-50 rounded border border-gray-200 text-xs">
+                        <span className="text-gray-700 font-mono truncate">📄 {f.name}</span>
+                        <button
+                          onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))}
+                          className="text-gray-400 hover:text-red-500 ml-2 flex-shrink-0"
+                        >✕</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <button
+                  onClick={() => fileInputRef.current.click()}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >+ Add file</button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".sql,.txt,.pls,.prc,.pkb"
+                  style={{ display: 'none' }}
+                  onChange={handleFileAdd}
+                />
+              </div>
+            </div>
+
+          ) : (
+            /* Step 4 — AI Review & Submit */
+            <div className="space-y-5">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-gray-700">🤖 AI Review</label>
+                  {!reviewing && (
+                    <button
+                      onClick={rerunReview}
+                      className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >Re-run</button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mb-2">Review is editable — adjust before submitting.</p>
+
+                {reviewing ? (
+                  <div className="flex items-center gap-3 py-5 px-4 bg-gray-50 rounded-md border border-gray-200">
+                    <div className="flex gap-1">
+                      {[0, 1, 2].map(i => (
+                        <div
+                          key={i}
+                          className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce"
+                          style={{ animationDelay: `${i * 150}ms` }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-sm text-gray-500">Reviewing your request with AI...</span>
+                  </div>
+                ) : reviewError ? (
+                  <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-md">
+                    <p className="text-xs text-amber-700">{reviewError}</p>
+                  </div>
+                ) : (
+                  <textarea
+                    value={aiReview}
+                    onChange={e => setAiReview(e.target.value)}
+                    rows={9}
+                    className="w-full border border-gray-200 rounded-md px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
+                    placeholder="AI review will appear here..."
+                  />
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Your GitHub username <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">@</span>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="your-github-handle"
+                    className="w-full border border-gray-200 rounded-md pl-7 pr-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Defaults to @code-collab-web if left blank.</p>
+              </div>
+
+              {submitError && (
+                <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-md">
+                  <p className="text-xs text-red-700">{submitError}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer nav */}
+        {!submitted ? (
+          <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between flex-shrink-0">
+            <button
+              onClick={() => step > 1 ? setStep(s => s - 1) : onClose()}
+              disabled={submitting}
+              className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors disabled:opacity-50"
+            >
+              {step === 1 ? 'Cancel' : '← Back'}
+            </button>
+            {step < 4 ? (
+              <button
+                onClick={() => setStep(s => s + 1)}
+                disabled={!canAdvance}
+                className="px-5 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#2563eb' }}
+              >
+                Next →
+              </button>
+            ) : (
+              <button
+                onClick={handleSubmit}
+                disabled={submitting || reviewing}
+                className="px-5 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#2563eb' }}
+              >
+                {submitting ? 'Submitting...' : 'Submit to GitHub ↗'}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="px-6 py-4 border-t border-gray-100 flex justify-end flex-shrink-0">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -629,6 +1035,7 @@ export default function App() {
   const [showRaw, setShowRaw] = useState(false)
   const [panelVisible, setPanelVisible] = useState(false)
   const [selectedFile, setSelectedFile] = useState('')
+  const [featureModalOpen, setFeatureModalOpen] = useState(false)
   const loadingIntervalRef = useRef(null)
   const fileInputRef = useRef(null)
   const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY
@@ -761,7 +1168,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f6f8fa' }}>
-      <Header />
+      <Header onFeatureRequest={() => setFeatureModalOpen(true)} />
+      {featureModalOpen && <FeatureRequestModal onClose={() => setFeatureModalOpen(false)} />}
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-6 py-8">
         {/* Missing API key warning */}
