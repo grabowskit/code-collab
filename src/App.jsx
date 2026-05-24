@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 
-const DEMO_PROCEDURE = `CREATE PROCEDURE usp_calculate_order_status AS
+const DEMO_PROCEDURES = {
+  'T-SQL': `CREATE PROCEDURE usp_calculate_order_status AS
 BEGIN
     IF OBJECT_ID('tempdb..#order_base') IS NOT NULL DROP TABLE #order_base;
 
@@ -39,7 +40,108 @@ BEGIN
     JOIN dbo.customer_history ch ON o.customer_id = ch.customer_id;
 
     INSERT INTO dbo.enriched_orders SELECT * FROM #order_base;
-END`
+END`,
+
+  'PL/SQL': `CREATE OR REPLACE PROCEDURE usp_enrich_order_summary IS
+    CURSOR c_orders IS
+        SELECT o.order_id, o.customer_id, o.order_date,
+               o.total_amount, o.status
+        FROM orders o
+        WHERE o.order_date >= ADD_MONTHS(SYSDATE, -3);
+
+    v_risk_flag       VARCHAR2(10);
+    v_lifetime_tier   VARCHAR2(10);
+    v_lifetime_value  NUMBER;
+    v_watchlist_count NUMBER;
+BEGIN
+    FOR rec IN c_orders LOOP
+        SELECT COUNT(*) INTO v_watchlist_count
+        FROM fraud_watchlist fw
+        WHERE fw.customer_id = rec.customer_id AND fw.active = 1;
+
+        IF rec.total_amount > 10000 OR v_watchlist_count > 0 THEN
+            v_risk_flag := 'HIGH';
+        ELSE
+            v_risk_flag := 'LOW';
+        END IF;
+
+        SELECT NVL(total_lifetime_value, 0) INTO v_lifetime_value
+        FROM customer_history
+        WHERE customer_id = rec.customer_id;
+
+        IF v_lifetime_value >= 50000 THEN
+            v_lifetime_tier := 'PLATINUM';
+        ELSIF v_lifetime_value >= 10000 THEN
+            v_lifetime_tier := 'GOLD';
+        ELSIF v_lifetime_value >= 1000 THEN
+            v_lifetime_tier := 'SILVER';
+        ELSE
+            v_lifetime_tier := 'BRONZE';
+        END IF;
+
+        INSERT INTO enriched_orders (
+            order_id, customer_id, order_date,
+            total_amount, status, risk_flag, lifetime_value_tier
+        ) VALUES (
+            rec.order_id, rec.customer_id, rec.order_date,
+            rec.total_amount, rec.status, v_risk_flag, v_lifetime_tier
+        );
+    END LOOP;
+
+    COMMIT;
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+END usp_enrich_order_summary;`,
+
+  'Other SQL': `CREATE OR REPLACE PROCEDURE calculate_churn_risk()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_cutoff_date DATE := CURRENT_DATE - INTERVAL '90 days';
+BEGIN
+    DROP TABLE IF EXISTS staging_churn_candidates;
+
+    CREATE TEMP TABLE staging_churn_candidates AS
+    SELECT
+        c.customer_id,
+        c.email,
+        c.created_at,
+        MAX(o.order_date)              AS last_order_date,
+        COUNT(o.order_id)              AS total_orders,
+        COALESCE(SUM(o.total_amount), 0) AS total_spend
+    FROM customers c
+    LEFT JOIN orders o ON c.customer_id = o.customer_id
+    GROUP BY c.customer_id, c.email, c.created_at;
+
+    INSERT INTO churn_risk_scores (
+        customer_id, email, churn_score, risk_band, scored_at
+    )
+    SELECT
+        s.customer_id,
+        s.email,
+        CASE
+            WHEN s.last_order_date < v_cutoff_date AND s.total_orders > 3 THEN 0.85
+            WHEN s.last_order_date < v_cutoff_date                        THEN 0.60
+            WHEN s.total_spend < 100                                       THEN 0.40
+            ELSE 0.15
+        END AS churn_score,
+        CASE
+            WHEN s.last_order_date < v_cutoff_date AND s.total_orders > 3 THEN 'HIGH'
+            WHEN s.last_order_date < v_cutoff_date                        THEN 'MEDIUM'
+            WHEN s.total_spend < 100                                       THEN 'LOW'
+            ELSE 'MINIMAL'
+        END AS risk_band,
+        NOW()
+    FROM staging_churn_candidates s
+    ON CONFLICT (customer_id) DO UPDATE
+        SET churn_score = EXCLUDED.churn_score,
+            risk_band   = EXCLUDED.risk_band,
+            scored_at   = EXCLUDED.scored_at;
+END;
+$$;`,
+}
 
 const SYSTEM_PROMPT = `You are an expert data engineer and database migration specialist with deep knowledge of T-SQL, PL/SQL, dbt, Snowflake SQL, and modern data stack architecture. You help enterprise teams understand and migrate legacy database code.
 
@@ -497,7 +599,7 @@ function LoadingOverlay({ message }) {
 }
 
 export default function App() {
-  const [sql, setSql] = useState(DEMO_PROCEDURE)
+  const [sql, setSql] = useState(DEMO_PROCEDURES['T-SQL'])
   const [dialect, setDialect] = useState('T-SQL')
   const [loading, setLoading] = useState(false)
   const [loadingMsg, setLoadingMsg] = useState('')
@@ -620,7 +722,13 @@ export default function App() {
               <label className="text-sm font-medium text-gray-600">Dialect:</label>
               <select
                 value={dialect}
-                onChange={e => setDialect(e.target.value)}
+                onChange={e => {
+                  const next = e.target.value
+                  setDialect(next)
+                  if (Object.values(DEMO_PROCEDURES).includes(sql)) {
+                    setSql(DEMO_PROCEDURES[next])
+                  }
+                }}
                 className="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="T-SQL">T-SQL</option>
