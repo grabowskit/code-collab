@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/favicon.svg" width="72" height="72" alt="CodeCollab">
+</p>
+
 # CodeCollab SQL Migration Explainer
 
 > **Phase 1 Prototype** — AI-powered SQL migration pipeline
